@@ -24,22 +24,19 @@ class Scanner:
         self.is_over = False
         self.udp_dict = {}
         self.tcp_dict = {}
-        self.res_dict = {}
 
     def _check_tcp_port(self, port: int):
         with(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
             sock.settimeout(0.5)
             try:
-                res_of_con = sock.connect_ex((self.ip, port))
-                if not res_of_con:
-                    sock.connect((self.ip, port))
-                    try:
-                        data = sock.recv(1024)
-                    except socket.timeout:
-                        sock.sendall('GET / HTTP/1.1\n\n'.encode())
-                        data = sock.recv(1024)
-                    if data:
-                        self.result_queue.put(Analyzer(port, "TCP", data=data))
+                sock.connect((self.ip, port))
+                try:
+                    data = sock.recv(1024)
+                except socket.timeout:
+                    sock.sendall('GET / HTTP/1.1\n\n'.encode())
+                    data = sock.recv(1024)
+                if data:
+                    self.result_queue.put(Analyzer(port, "TCP", data=data))
             except socket.error:
                 pass
 
@@ -64,7 +61,6 @@ class Scanner:
                                                            own_packet=pack, mask=masks_pack[pack], app_proto='SNTP'))
                 except socket.timeout:
                     pass
-                    # print(port)
                 except socket.error:
                     pass
 
@@ -74,14 +70,29 @@ class Scanner:
             for port in range(self.ports[0], self.ports[1] + 1):
                 if self.is_tcp:
                     processes.append(self.thread_pool.apply_async(self._check_tcp_port, args=(port,)))
+                    # self._check_tcp_port(port)
                 if self.is_udp:
+                    pass
                     processes.append(self.thread_pool.apply_async(self._check_udp_port, args=(port,)))
                     # self._check_udp_port(port)
             for process in processes:
                 process.wait()
             while not self.result_queue.empty():
-                print(self.result_queue.get())
-
+                el = self.result_queue.get()
+                if el.proto == 'UDP':
+                    if el.port not in self.udp_dict:
+                        self.udp_dict[el.port] = el
+                    elif el.app_proto != '' and self.udp_dict[el.port] == '':
+                        self.udp_dict[el.port] = el
+                if el.proto == 'TCP':
+                    if el.port not in self.tcp_dict:
+                        self.tcp_dict[el.port] = el
+                    elif el.app_proto != '' and self.tcp_dict[el.port] == '':
+                        self.tcp_dict[el.port] = el
+            for value in self.udp_dict.values():
+                print(value)
+            for value in self.tcp_dict.values():
+                print(value)
         finally:
             self.thread_pool.terminate()
             self.thread_pool.join()
