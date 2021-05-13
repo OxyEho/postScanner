@@ -27,7 +27,7 @@ def get_dns_pack() -> bytes:
     ns_count = struct.pack('!H', 0)
     ar_count = struct.pack('!H', 0)
     header = pack_id + flags + qd_count + an_count + ns_count + ar_count
-    domain = 'HABRAHABR.ru'
+    domain = 'a.ru'
     sec_dom, first_dom = domain.split('.')
     mark_first = struct.pack('!H', len(sec_dom))
     byte_sec = struct.pack(f'!{len(sec_dom)}s', sec_dom.encode())
@@ -39,5 +39,5 @@ def get_dns_pack() -> bytes:
     return packet
 
 
-print(get_dns_pack())
+# print(get_dns_pack())
 

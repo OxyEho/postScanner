@@ -1,16 +1,18 @@
 import socket
-import struct
 
 
 from multiprocessing.pool import ThreadPool
+from multiprocessing import Lock
 from queue import Queue, Empty
 
 
 from portscan.analyzer import Analyzer
-from portscan.packets import get_sntp_packet
+from portscan.packets import get_sntp_packet, get_dns_pack
 
 
 class Scanner:
+
+    lock = Lock()
 
     def __init__(self, ip: str, is_udp: bool, is_tcp: bool, ports: tuple):
         self.ip = socket.gethostbyname(ip)
@@ -20,70 +22,66 @@ class Scanner:
         self.thread_pool = ThreadPool(processes=10)
         self.result_queue = Queue()
         self.is_over = False
+        self.udp_dict = {}
+        self.tcp_dict = {}
+        self.res_dict = {}
 
     def _check_tcp_port(self, port: int):
         with(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
             sock.settimeout(0.5)
-            print(port)
             try:
                 res_of_con = sock.connect_ex((self.ip, port))
                 if not res_of_con:
                     sock.connect((self.ip, port))
-                    sock.sendall('GET / HTTP/1.1\n\n'.encode())
-                    data = sock.recv(1024)
-                    print(data)
-                    self.result_queue.put(Analyzer(port, "TCP", data=data))
+                    try:
+                        data = sock.recv(1024)
+                    except socket.timeout:
+                        sock.sendall('GET / HTTP/1.1\n\n'.encode())
+                        data = sock.recv(1024)
+                    if data:
+                        self.result_queue.put(Analyzer(port, "TCP", data=data))
             except socket.error:
-                print(port)
                 pass
-            finally:
-                if port == self.ports[1]:
-                    self.is_over = True
 
     def _check_udp_port(self, port: int):
         sntp_pack = get_sntp_packet()
-        packets = {sntp_pack: 'SNTP', b'': ''}
-        masks_pack = {sntp_pack: '!BBbbiiiIIIIIIII', b'': ''}
+        dns_pack = get_dns_pack()
+        packets = {dns_pack: 'DNS', sntp_pack: 'SNTP', b'': ''}
+        masks_pack = {sntp_pack: '!BBbbiiiIIIIIIII', b'': '', dns_pack: '!HHHHHH'}
         with(socket.socket(socket.AF_INET, socket.SOCK_DGRAM)) as sock:
-            sock.settimeout(2)
+            sock.settimeout(3)
             for pack in packets:
                 try:
-                    # sock.connect((self.ip, port))
                     sock.sendto(pack, (self.ip, port))
-                    data, _ = sock.recvfrom(1024)
+                    data, _ = sock.recvfrom(2048)
                     if data:
-                        try:
-                            print(struct.unpack(masks_pack[pack], data))
-                            self.result_queue.put(Analyzer(port, "UDP", packets[pack]))
-                        except struct.error:
-                            self.result_queue.put(Analyzer(port, "UDP"))
+                        if packets[pack] == 'DNS':
+                            self.result_queue.put(Analyzer(port, "UDP", data=data[:12],
+                                                           own_packet=pack[:12],
+                                                           mask=masks_pack[pack],  app_proto='DNS'))
+                        elif packets[pack] == 'SNTP':
+                            self.result_queue.put(Analyzer(port, "UDP", data=data,
+                                                           own_packet=pack, mask=masks_pack[pack], app_proto='SNTP'))
                 except socket.timeout:
-                    print(port)
+                    pass
+                    # print(port)
                 except socket.error:
                     pass
-                finally:
-                    if port == self.ports[1]:
-                        self.is_over = True
 
     def run(self):
-        in_process_tcp = set()
-        in_process_udp = set()
         try:
-            port = self.ports[0]
-            while not self.is_over:
-                if self.is_tcp and port < self.ports[1] + 1 and port not in in_process_tcp:
-                    self.thread_pool.apply_async(self._check_tcp_port, args=(port,))
-                    in_process_tcp.add(port)
-                if self.is_udp and port < self.ports[1] + 1 and port not in in_process_udp:
-                    self.thread_pool.apply_async(self._check_udp_port, args=(port,))
-                    in_process_udp.add(port)
-                try:
-                    res = self.result_queue.get(timeout=0.5)
-                    print(res)
-                except Empty:
-                    pass
-                if port < self.ports[1]:
-                    port += 1
+            processes = []
+            for port in range(self.ports[0], self.ports[1] + 1):
+                if self.is_tcp:
+                    processes.append(self.thread_pool.apply_async(self._check_tcp_port, args=(port,)))
+                if self.is_udp:
+                    processes.append(self.thread_pool.apply_async(self._check_udp_port, args=(port,)))
+                    # self._check_udp_port(port)
+            for process in processes:
+                process.wait()
+            while not self.result_queue.empty():
+                print(self.result_queue.get())
+
         finally:
             self.thread_pool.terminate()
             self.thread_pool.join()
