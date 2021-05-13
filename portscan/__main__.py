@@ -11,5 +11,8 @@ if __name__ == '__main__':
     arguments_parser.add_argument('-t', action='store_true', dest='tcp')
     arguments_parser.add_argument('-p', '--ports', nargs='+', dest='ports')
     args = arguments_parser.parse_args()
+    if len(args.ports) != 2:
+        print('Введите диапозон портов')
+        exit(0)
     scanner = Scanner(args.ip, args.udp, args.tcp, args.ports)
     scanner.run()
